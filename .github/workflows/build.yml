@@ -10,7 +10,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        os: [ windows-latest, ubuntu-latest, macos-latest ]
 
     steps:
       - uses: actions/checkout@v3
@@ -35,6 +35,7 @@ jobs:
             mv dist/replace_vars dist/replace_vars-linux
           else
             mv dist/replace_vars dist/replace_vars-macos
+          fi
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v1
