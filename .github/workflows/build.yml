@@ -1,4 +1,4 @@
-name: Build for Windows and Linux
+name: Build and Release for Windows and Linux
 
 on:
   push:
@@ -10,7 +10,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ windows-latest, ubuntu-latest ]
+        os: [windows-latest, ubuntu-latest]
 
     steps:
       - uses: actions/checkout@v3
@@ -21,17 +21,26 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: |
-          pip install pyinstaller
+        run: pip install pyinstaller
 
       - name: Build executable
         run: |
           pyinstaller replace_vars.py --onefile
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Rename output for platform
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            mv dist/replace_vars.exe dist/replace_vars-windows.exe
+          else
+            mv dist/replace_vars dist/replace_vars-linux
+          fi
+        shell: bash
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v1
         with:
-          name: ${{ matrix.os }}-build
-          path: |
-            dist/replace_vars.exe
-            dist/replace_vars
+          files: |
+            dist/replace_vars-windows.exe
+            dist/replace_vars-linux
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
