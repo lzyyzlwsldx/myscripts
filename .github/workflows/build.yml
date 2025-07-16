@@ -31,6 +31,5 @@ jobs:
         with:
           name: ${{ matrix.os }}-build
           path: |
-            dist/replace_vars-windows.exe
-            dist/replace_vars-linux
-            dist/replace_vars-macos
+            dist/replace_vars.exe
+            dist/replace_vars
