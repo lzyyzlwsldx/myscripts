@@ -3,7 +3,7 @@ name: Build for Windows, Linux, and macOS
 on:
   push:
     tags:
-      - 'v*'  # 打 tag（如 v1.0.0）触发构建和发布
+      - 'v*'
 
 jobs:
   build:
@@ -26,23 +26,11 @@ jobs:
       - name: Build executable
         run: pyinstaller replace_vars.py --onefile
 
-      - name: Rename output for platform
-        shell: bash
-        run: |
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            mv dist/replace_vars.exe dist/replace_vars-windows.exe
-          elif [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
-            mv dist/replace_vars dist/replace_vars-linux
-          else
-            mv dist/replace_vars dist/replace_vars-macos
-          fi
-
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v1
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: |
+          name: ${{ matrix.os }}-build
+          path: |
             dist/replace_vars-windows.exe
             dist/replace_vars-linux
             dist/replace_vars-macos
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
