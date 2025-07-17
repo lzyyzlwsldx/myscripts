@@ -127,6 +127,9 @@ def load_data_from_csv(filepath: str, control_type='var'):
                 assert row[5], '{} 不存在，请处理！'.format(error_log(5, row[5]))
                 assert os.path.exists(os.path.join(install_path, row[5])), ('{} 相对路径不存在，请调整！'
                                                                             .format(error_log(5, row[5])))
+                filename, ext = os.path.splitext(row[5])
+                assert os.path.basename(filename).split('-')[-1].lower() == row[1].lower() \
+                       and ext[2:] in {'aml', 'ml'}, '{} 不符合 YAML 命名规范，请调整！'.format(error_log(5, row[5]))
                 # deployment，镜像包
                 assert row[1].lower() not in DEPLOY_NEED_IMAGE or row[6], ('{} 不存在，请处理！'
                                                                            .format(error_log(6, row[6])))
@@ -209,7 +212,7 @@ def replace_placeholders_in_file(config_temple_path: str, variables: dict, defin
     return matched_keys, missing_keys, status
 
 
-def main(install_dir, check=False):
+def dispose_controls(install_dir, check):
     log.info('*' * 55 + '  执行开始  ' + '*' * 55)
     check_standard(install_dir)
     filepaths = query_template_filepaths(install_dir)
@@ -235,8 +238,15 @@ def main(install_dir, check=False):
     log.info('共计处理 %d 个模版文件，成功 %d 个， 失败 %d 个！', len(filepaths), ok_num, len(filepaths) - ok_num)
     log.info('全局变量表中共定义 %d 个变量，成功替换 %d 个，有 %d 个已定义未替换！有 %d 个未定义未替换！！！',
              len(vars_map.keys()), len(all_matched_keys), len(unused_keys), len(all_missing_keys))
-    unused_keys and log.warning('%s 变量在全局变量表中定义，但未在部署模版中发现！', unused_keys)
-    all_missing_keys and log.warning('%s 变量在部署模版中发现！但未在全局变量表中定义！', all_missing_keys)
+    unused_keys and log.warning('%s 变量在全局变量表中定义，但未在部署模版中发现！请确认！', unused_keys)
+    all_missing_keys and log.warning('%s 变量在部署模版中发现！但未在全局变量表中定义！请确认！', all_missing_keys)
+
+
+def main(install_dir, check=False):
+    try:
+        dispose_controls(install_dir, check)
+    except AssertionError as e:
+        log.exception(e)
 
 
 def get_real_app_dir():
