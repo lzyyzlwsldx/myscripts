@@ -4,44 +4,60 @@ import os
 import re
 import csv
 import sys
+import logging
 import argparse
 
-# columns map
 CONTROL_COLUMNS_MAP = {'var': '序号 变量键（KEY） 变量描述 变量类型 填写示例 文件路径 填写说明',
                        'deploy': '步骤 资源类型 资源名称 命名空间 部署类型 YAML路径 镜像包名称 备注',
                        'script': '步骤 脚本路径 是否幂等 是否依赖 执行机类型 执行用户 K8S命名空间 负载资源名称 备注'}
-
 # deploy-execution-plan.csv columns
-DEPLOY_RESOURCE_TYPE = {'deployment', 'statefulset', 'daemonset', 'job', 'cronjob', 'service', 'ingress',
-                        'configmap', 'secret', 'pvc', 'hpa', 'vpa', 'namespace'}
+DEPLOY_RESOURCE_TYPE = {'namespace': 0,
+                        'configmap': 1, 'secret': 1, 'pvc': 1,
+                        'deployment': 2, 'statefulset': 2, 'daemonset': 2, 'job': 2, 'cronjob': 2, 'service': 2,
+                        'hpa': 3, 'vpa': 3,
+                        'ingress': 4}
 DEPLOY_NEED_IMAGE = {'deployment', 'statefulset', 'daemonset', 'job', 'cronjob'}
 DEPLOY_TYPE = {'更新', '下线', '重启'}
 # global-vars.csv columns
 VAR_TYPE = {'字符串', '数值', '布尔'}
-
-CONTROL_TYPE_MAP = {'var': 'global-vars', 'deploy': 'deploy-execution-plan', 'script': 'script-execution-plan'}
-
 # script-execution-plan.csv columns
 SCRIPT_COLUMNS = '步骤 脚本路径 是否幂等 是否依赖 执行机类型 执行用户 K8S命名空间 负载资源名称 备注'
-
-# 占位符格式：VAR_NAME 或 \x02VAR_NAME\x03
+CONTROL_TYPE_MAP = {'var': 'global-vars', 'deploy': 'deploy-execution-plan', 'script': 'script-execution-plan'}
+# fomat：VAR_NAME 或 \x02VAR_NAME\x03
 PATTERN = re.compile(r'(?:\\x02|\x02)(.*?)(?:\\x03|\x03)')
+
+
+def set_logger():
+    # 设置日志格式
+    log_format = '%(asctime)s || %(levelname)s || %(message)s'
+    log_level = logging.INFO
+    logger = logging.getLogger()
+    logger.setLevel(log_level)
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter(log_format))
+    file_handler = logging.FileHandler("replace_vars.log", encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter(log_format))
+    logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
+    return logger
+
+
+log = set_logger()
 
 
 def check_standard(install_dir):
     assert os.path.exists(install_dir), '{} 部署包目录不存在，请输入正确路径！'.format(install_dir)
-    # exist_deploy, exist_script = 0, 0
     if not os.path.exists(os.path.join(install_dir, 'controls/deploy-execution-plan.csv')):
-        print('******** 未发现 deploy-execution-plan.csv【容器部署计划】，请确认本次发版是否不涉及容器部署！ ********')
+        log.info('~~~~~~~~~~ 未发现【容器部署计划】deploy-execution-plan.csv，请确认本次发版是否不涉及容器部署！~~~~~~~~~~')
     else:
         load_data_from_csv(os.path.join(install_dir, 'controls/deploy-execution-plan.csv'), 'deploy')
-        print('********【容器部署计划】检查通过 ********')
+        log.info(30 * '~' + '%s' + 30 * '~', ' 【容器部署计划】检查通过 ')
     if not os.path.exists(os.path.join(install_dir, 'controls/script-execution-plan.csv')):
-        print('******** 未发现 script-execution-plan.csv【脚本执行计划】，请确认本次发版是否不涉及脚本执行！ ********')
+        log.info('~~~~~~~~~~ 未发现【脚本执行计划】script-execution-plan.csv，请确认本次发版是否不涉及脚本执行！~~~~~~~~~~')
     else:
         load_data_from_csv(os.path.join(install_dir, 'controls/script-execution-plan.csv'), 'script')
-        print('********【脚本执行计划】检查通过 ********')
-    assert os.path.exists(os.path.join(install_dir, 'controls/global-vars.csv')), '未发现 global-vars.csv（全局变量表），请确认！'
+        log.info(30 * '~' + '%s' + 30 * '~', ' 【脚本执行计划】检查通过 ')
+    assert os.path.exists(os.path.join(install_dir, 'controls/global-vars.csv')), '未发现【全局变量清单】global-vars.csv，请确认！！！'
 
 
 def query_template_filepaths(root_dir):
@@ -81,7 +97,7 @@ def load_data_from_csv(filepath: str, control_type='var'):
         i for i, row in enumerate(data_lines)
         if all(str(cell).strip() == '' or cell is None for cell in row)
     }
-
+    deploy_seq_last = 0
     for idx, row in enumerate(data_lines):
         if idx in empty_idx_set:
             continue
@@ -100,10 +116,13 @@ def load_data_from_csv(filepath: str, control_type='var'):
         elif control_type == 'deploy':
             for i in range(5):
                 assert row[i], '{} 不存在，请处理！'.format(error_log(i, row[i]))
-            assert row[1].lower() in DEPLOY_RESOURCE_TYPE, ('{} 不在支持资源类型范围内，请调整！'
-                                                            .format(error_log(1, row[1])))
+            assert row[1].lower() in DEPLOY_RESOURCE_TYPE.keys(), ('{} 不在支持资源类型范围内，请调整！'
+                                                                   .format(error_log(1, row[1])))
             assert row[4] in DEPLOY_TYPE, '{} 不在支持部署类型范围内，请调整！'.format(error_log(4, row[4]))
             if '更新' == row[4]:
+                assert DEPLOY_RESOURCE_TYPE[row[1].lower()] >= deploy_seq_last, \
+                    ('{} 部署先后顺序有误，请根据资源类型调整部署顺序！'.format(error_log(1, row[1])))
+                deploy_seq_last = DEPLOY_RESOURCE_TYPE[data_lines[idx][1].lower()]
                 # yaml不存在
                 assert row[5], '{} 不存在，请处理！'.format(error_log(5, row[5]))
                 assert os.path.exists(os.path.join(install_path, row[5])), ('{} 相对路径不存在，请调整！'
@@ -155,18 +174,19 @@ def read_file_with_autoencoding(filepath: str, file_type=None):
             else:
                 with open(filepath, 'r', encoding=fmt) as f:
                     content = f.read()
-            fmt != 'utf-8-sig' and print('！！！尝试 {} 加载模版成功，请调整该文件编码为 utf-8 ！'.format(fmt))
+            fmt != 'utf-8-sig' and log.info('！！！尝试 %s 加载模版成功，请调整该文件编码为 utf-8 ！', fmt)
             return content, fmt
         except UnicodeDecodeError as e:
-            print('！！！尝试 {} 加载模版错误！{}'.format(fmt, filepath), e)
+            log.warning('尝试 %s 编码格式加载模版失败！%s, error: %s', fmt, filepath, e)
     raise Exception('文件编码不支持，模版文件无法正常打开！！！')
 
 
-def replace_placeholders_in_file(config_temple_path: str, variables: dict, check=False):
+def replace_placeholders_in_file(config_temple_path: str, variables: dict, defined_vars: set, check=False):
     """
     替换文件中的占位符
     :param config_temple_path:
     :param variables:
+    :param defined_vars:
     :param check:
     :return:
     """
@@ -174,38 +194,49 @@ def replace_placeholders_in_file(config_temple_path: str, variables: dict, check
     try:
         content, fmt = read_file_with_autoencoding(config_temple_path)
         replaced_text, matched_keys, missing_keys, replace_num = replace_placeholders(content, variables)
+        defined_vars = defined_vars.difference(matched_keys)
         status = True
         if not check:
             with open(config_temple_path, 'w', encoding='utf-8') as f:
                 f.write(replaced_text)
-        print('成功：{}, 替换位置 {} 个'.format(config_temple_path, replace_num))
-        missing_keys and print('发现未定义变量！！！请确认: {}'.format(missing_keys))
+        log.info('成功：%s, 替换位置 %d 个', config_temple_path, replace_num)
+        defined_vars and log.warning(' ##### %s 变量的【文件路径】⬆ 中未找到对应变量！请修改变量对应路径！！！', defined_vars)
+        missing_keys and log.warning(' ##### 发现未定义变量！！！请确认: %s', missing_keys)
     except UnicodeDecodeError as e:
-        print('失败：{}, error is {}'.format(config_temple_path, e))
+        log.error('失败：%s, 编码错误，error: %s', config_temple_path, e)
     except Exception as e:
-        print('失败：{}, error is {}'.format(config_temple_path, e))
+        log.error('失败：%s, error: %s', config_temple_path, e)
     return matched_keys, missing_keys, status
 
 
 def main(install_dir, check=False):
+    log.info('*' * 55 + '  执行开始  ' + '*' * 55)
     check_standard(install_dir)
     filepaths = query_template_filepaths(install_dir)
     all_vars, empty_idx_set = load_data_from_csv(os.path.join(install_dir, 'controls/global-vars.csv'))
-    vars_map = {value[1]: value[4] for i, value in enumerate(all_vars) if i not in empty_idx_set}
+    vars_map, file_vars_map = dict(), dict()
+    for i, value in enumerate(all_vars):
+        if i in empty_idx_set:
+            continue
+        assert value[1] not in vars_map.keys(), '全局变量 {} 重复定义，请修改台账！'.format(value[1])
+        vars_map[value[1]] = value[4]
+        var_files = value[5] and value[5].splitlines() or []
+        [file_vars_map.setdefault(os.path.join(install_dir, vf), set()).add(value[1]) for vf in var_files]
     all_missing_keys, all_matched_keys = set(), set()
     ok_num = 0
     for fp in filepaths:
-        matched_keys, missing_keys, status = replace_placeholders_in_file(fp, vars_map, check)
+        defined_vars = file_vars_map.get(fp, set())
+        matched_keys, missing_keys, status = replace_placeholders_in_file(fp, vars_map, defined_vars, check)
         all_matched_keys = all_matched_keys.union(matched_keys)
         all_missing_keys = all_missing_keys.union(missing_keys)
         ok_num += status
     unused_keys = vars_map.keys() - all_matched_keys
-    print('\n' + '*' * 50 + '  变量替换执行结果  ' + '*' * 50)
-    print('共计处理 {} 个模版文件，成功 {} 个， 失败 {} 个！'.format(len(filepaths), ok_num, len(filepaths) - ok_num))
-    print('全局变量表中共定义 {} 个变量，成功替换 {} 个，有 {} 个已定义未替换！有 {} 个未定义未替换！！！'
-          .format(len(vars_map.keys()), len(all_matched_keys), len(unused_keys), len(all_missing_keys)))
-    unused_keys and print('{} 变量在全局变量表中定义，但未在部署模版中发现！'.format(unused_keys))
-    all_missing_keys and print('{} 变量在部署模版中发现！但未在全局变量表中定义！'.format(all_missing_keys))
+    log.info(30 * '~' + '%s' + 30 * '~', ' 【全局变量替换】执行结果 ')
+    log.info('共计处理 %d 个模版文件，成功 %d 个， 失败 %d 个！', len(filepaths), ok_num, len(filepaths) - ok_num)
+    log.info('全局变量表中共定义 %d 个变量，成功替换 %d 个，有 %d 个已定义未替换！有 %d 个未定义未替换！！！',
+             len(vars_map.keys()), len(all_matched_keys), len(unused_keys), len(all_missing_keys))
+    unused_keys and log.warning('%s 变量在全局变量表中定义，但未在部署模版中发现！', unused_keys)
+    all_missing_keys and log.warning('%s 变量在部署模版中发现！但未在全局变量表中定义！', all_missing_keys)
 
 
 def get_real_app_dir():
