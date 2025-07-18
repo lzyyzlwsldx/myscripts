@@ -108,10 +108,11 @@ def load_data_from_csv(filepath: str, control_type='var'):
             for i in range(len(row[:4])):
                 assert row[i], '{} 不存在，请处理！'.format(error_log(i, row[i]))
             assert row[3] in VAR_TYPE, '{} 不在支持变量类型范围内，请调整！'.format(error_log(3, row[3]))
-            var_files = row[5] and row[5].splitlines() or []
+            var_files = row[5] and row[5].strip().splitlines() or []
+            var_files = len(var_files) == 1 and var_files[0].split(',') or var_files
             for var_file in var_files:
-                assert os.path.exists(os.path.join(install_path, var_file)), ('{} 相对路径不存在，请调整！'
-                                                                              .format(error_log(5, var_file)))
+                assert os.path.exists(os.path.join(install_path, var_file)), \
+                    '{} 相对路径不存在，如多个文件路径则使用换行分隔，请调整！'.format(error_log(5, var_file))
         # DEPLOY_COLUMNS = '步骤 资源类型 资源名称 命名空间 部署类型 YAML路径 镜像包名称 备注'
         elif control_type == 'deploy':
             for i in range(5):
@@ -184,31 +185,31 @@ def read_file_with_autoencoding(filepath: str, file_type=None):
     raise Exception('文件编码不支持，模版文件无法正常打开！！！')
 
 
-def replace_placeholders_in_file(config_temple_path: str, variables: dict, defined_vars: set, check=False):
+def replace_placeholders_in_file(template_path: str, variables: dict, defined_keys: set, check=False):
     """
     替换文件中的占位符
-    :param config_temple_path:
+    :param template_path:
     :param variables:
-    :param defined_vars:
+    :param defined_keys:
     :param check:
     :return:
     """
     matched_keys, missing_keys, status = set(), set(), False
     try:
-        content, fmt = read_file_with_autoencoding(config_temple_path)
+        content, fmt = read_file_with_autoencoding(template_path)
         replaced_text, matched_keys, missing_keys, replace_num = replace_placeholders(content, variables)
-        defined_vars = defined_vars.difference(matched_keys)
+        defined_keys.difference_update(matched_keys)
         status = True
         if not check:
-            with open(config_temple_path, 'w', encoding='utf-8') as f:
+            with open(template_path, 'w', encoding='utf-8') as f:
                 f.write(replaced_text)
-        log.info('成功：%s, 替换位置 %d 个', config_temple_path, replace_num)
-        defined_vars and log.warning(' ##### %s 变量的【文件路径】⬆ 中未找到对应变量！请修改变量对应路径！！！', defined_vars)
+        log.info('成功：%s, 替换位置 %d 个', template_path, replace_num)
+        defined_keys and log.warning(' ##### %s 变量的【文件路径】⬆ 中未找到对应变量！请修改变量对应路径！！！', defined_keys)
         missing_keys and log.warning(' ##### 发现未定义变量！！！请确认: %s', missing_keys)
     except UnicodeDecodeError as e:
-        log.error('失败：%s, 编码错误，error: %s', config_temple_path, e)
+        log.error('失败：%s, 编码错误，error: %s', template_path, e)
     except Exception as e:
-        log.error('失败：%s, error: %s', config_temple_path, e)
+        log.error('失败：%s, error: %s', template_path, e)
     return matched_keys, missing_keys, status
 
 
@@ -224,15 +225,18 @@ def dispose_controls(install_dir, check):
         assert value[1] not in vars_map.keys(), '全局变量 {} 重复定义，请修改台账！'.format(value[1])
         vars_map[value[1]] = value[4]
         var_files = value[5] and value[5].splitlines() or []
+        var_files = len(var_files) == 1 and var_files[0].split(',') or var_files
         [file_vars_map.setdefault(os.path.join(install_dir, vf), set()).add(value[1]) for vf in var_files]
-    all_missing_keys, all_matched_keys = set(), set()
+    all_missing_keys, all_matched_keys, all_defined_keys = set(), set(), set()
     ok_num = 0
     for fp in filepaths:
-        defined_vars = file_vars_map.get(fp, set())
-        matched_keys, missing_keys, status = replace_placeholders_in_file(fp, vars_map, defined_vars, check)
+        defined_keys = file_vars_map.get(fp, set())
+        matched_keys, missing_keys, status = replace_placeholders_in_file(fp, vars_map, defined_keys, check)
         all_matched_keys = all_matched_keys.union(matched_keys)
         all_missing_keys = all_missing_keys.union(missing_keys)
+        all_defined_keys = all_defined_keys.union(defined_keys)
         ok_num += status
+
     unused_keys = vars_map.keys() - all_matched_keys
     log.info(30 * '~' + '%s' + 30 * '~', ' 【全局变量替换】执行结果 ')
     log.info('共计处理 %d 个模版文件，成功 %d 个， 失败 %d 个！', len(filepaths), ok_num, len(filepaths) - ok_num)
@@ -240,12 +244,14 @@ def dispose_controls(install_dir, check):
              len(vars_map.keys()), len(all_matched_keys), len(unused_keys), len(all_missing_keys))
     unused_keys and log.warning('%s 变量在全局变量表中定义，但未在部署模版中发现！请确认！', unused_keys)
     all_missing_keys and log.warning('%s 变量在部署模版中发现！但未在全局变量表中定义！请确认！', all_missing_keys)
+    all_defined_keys and log.warning('%s 变量定义的【文件路径】中未找到对应变量！请修正变量对应路径！具体路径请往上找日志。',
+                                     all_defined_keys)
 
 
 def main(install_dir, check=False):
     try:
         dispose_controls(install_dir, check)
-    except AssertionError as e:
+    except Exception as e:
         log.exception(e)
 
 
