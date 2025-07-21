@@ -17,14 +17,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Get Git tag and platform name
-        id: vars
+      - name: Set tag & platform vars
+        shell: bash
         run: |
           TAG_NAME=${GITHUB_REF#refs/tags/}
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             PLATFORM_NAME="windows-amd64"
-          else
+          elif [[ "${{ matrix.os }}" == "macos-latest" ]]; then
             PLATFORM_NAME="macos-amd64"
+          else
+            PLATFORM_NAME="linux-amd64"
           fi
           echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
           echo "PLATFORM_NAME=$PLATFORM_NAME" >> $GITHUB_ENV
