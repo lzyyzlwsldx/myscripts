@@ -1,0 +1,41 @@
+name: Build PyInstaller Executables
+
+on:
+  push:
+    tags:
+      - 'v*-linux'
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [ amd64, arm64 ]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up QEMU for cross-arch builds
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build in CentOS 7 (for ${{ matrix.arch }})
+        run: |
+          docker run --rm --platform linux/${{ matrix.arch }} -v "$PWD":/app -w /app centos:7 bash -c "
+            curl -o /etc/yum.repos.d/CentOS-Base.repo https://mirrors.aliyun.com/repo/Centos-7.repo &&
+            sed -i 's/^gpgcheck=1/gpgcheck=0/' /etc/yum.repos.d/CentOS-Base.repo &&
+            yum clean all && yum makecache fast &&
+            yum install -y gcc gcc-c++ make wget python3 python3-devel &&
+            pip3 install --upgrade pip &&
+            pip3 install wheel &&
+            pip3 install pyinstaller &&
+            pyinstaller replace_vars.py --onefile --name replace_vars-linux-${{ matrix.arch }} &&
+            mv dist/replace_vars /app/replace_vars-linux-${{ matrix.arch }}
+          "
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}-build
+          path: replace_vars-linux-${{ matrix.arch }}
