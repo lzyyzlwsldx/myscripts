@@ -1,4 +1,4 @@
-name: Build for Windows, Linux (CentOS 7), and macOS
+name: Build for Windows and macOS
 
 on:
   push:

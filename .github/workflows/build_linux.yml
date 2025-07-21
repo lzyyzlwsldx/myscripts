@@ -1,4 +1,4 @@
-name: Build PyInstaller Executables
+name: Build for Linux
 
 on:
   push:
