@@ -198,14 +198,17 @@ def replace_placeholders_in_file(template_path: str, variables: dict, defined_ke
     try:
         content, fmt = read_file_with_autoencoding(template_path)
         replaced_text, matched_keys, missing_keys, replace_num = replace_placeholders(content, variables)
-        defined_keys.difference_update(matched_keys)
         status = True
         if not check:
             with open(template_path, 'w', encoding='utf-8') as f:
                 f.write(replaced_text)
         log.info('成功：%s, 替换位置 %d 个', template_path, replace_num)
-        defined_keys and log.warning(' ##### %s 变量的【文件路径】⬆ 中未找到对应变量！请修改变量对应路径！！！', defined_keys)
-        missing_keys and log.warning(' ##### 发现未定义变量！！！请确认: %s', missing_keys)
+        undefined_path_keys = matched_keys.difference(defined_keys)
+        defined_keys.difference_update(matched_keys)
+        defined_keys.update(undefined_path_keys)
+        defined_keys and log.warning(' ##### 变量 %s 与【文件路径】%s 不匹配，对应【文件路径】有误或缺失！请修正！！！',
+                                     defined_keys, template_path)
+        missing_keys and log.error(' ##### 发现未定义变量！！！请确认: %s', missing_keys)
     except UnicodeDecodeError as e:
         log.error('失败：%s, 编码错误，error: %s', template_path, e)
     except Exception as e:
@@ -240,12 +243,12 @@ def dispose_controls(install_dir, check):
     unused_keys = vars_map.keys() - all_matched_keys
     log.info(30 * '~' + '%s' + 30 * '~', ' 【全局变量替换】执行结果 ')
     log.info('共计处理 %d 个模版文件，成功 %d 个， 失败 %d 个！', len(filepaths), ok_num, len(filepaths) - ok_num)
-    log.info('全局变量表中共定义 %d 个变量，成功替换 %d 个，有 %d 个已定义未替换！有 %d 个未定义未替换！！！',
+    log.info('全局变量表中共定义 %d 个变量，成功替换 %d 个，有 %d 个已定义未替换！有 %d 个未定义未替换！(后两项应为 0 )',
              len(vars_map.keys()), len(all_matched_keys), len(unused_keys), len(all_missing_keys))
-    unused_keys and log.warning('%s 变量在全局变量表中定义，但未在部署模版中发现！请确认！', unused_keys)
-    all_missing_keys and log.warning('%s 变量在部署模版中发现！但未在全局变量表中定义！请确认！', all_missing_keys)
-    all_defined_keys and log.warning('%s 变量定义的【文件路径】中未找到对应变量！请修正变量对应路径！具体路径请往上找日志。',
-                                     all_defined_keys)
+    unused_keys and log.error('%s 变量在全局变量表中定义，但未在部署模版中发现！请确认！！！', unused_keys)
+    all_missing_keys and log.error('%s 变量在部署模版中发现！但未在全局变量表中定义！请确认！！！', all_missing_keys)
+    all_defined_keys and log.warning(
+        '变量 %s 与【文件路径】不匹配，对应【文件路径】有误或缺失！请修正！！！具体问题请向上找日志。', all_defined_keys)
 
 
 def main(install_dir, check=False):
