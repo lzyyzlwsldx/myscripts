@@ -1,0 +1,49 @@
+name: Build for Windows and macOS
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ windows-latest, macos-latest, ubuntu-latest ]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Get Git tag and platform name
+        id: vars
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            PLATFORM_NAME="windows-amd64"
+          else
+            PLATFORM_NAME="macos-amd64"
+          fi
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+          echo "PLATFORM_NAME=$PLATFORM_NAME" >> $GITHUB_ENV
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install pyinstaller
+
+      - name: Build executable (Win/macOS only)
+        run: |
+          OUTPUT_NAME=replace_vars-${PLATFORM_NAME}-${TAG_NAME}
+          pyinstaller replace_vars.py --onefile --name $OUTPUT_NAME
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: replace_vars-${{ env.PLATFORM_NAME }}-${{ env.TAG_NAME }}
+          path: dist/replace_vars-${{ env.PLATFORM_NAME }}-${{ env.TAG_NAME }}*

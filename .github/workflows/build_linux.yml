@@ -12,7 +12,12 @@ jobs:
         arch: [ amd64, arm64 ]
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Get Git tag
+        id: get_tag
+        run: echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
 
       - name: Set up QEMU for cross-arch builds
         uses: docker/setup-qemu-action@v3
