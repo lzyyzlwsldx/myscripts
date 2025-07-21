@@ -39,7 +39,7 @@ jobs:
       - name: Install dependencies
         run: pip install pyinstaller
 
-      - name: Build executable (Win/macOS only)
+      - name: Build executable (Win/macOS/Ubuntu only)
         shell: bash
         run: |
           OUTPUT_NAME=replace_vars-${PLATFORM_NAME}-${TAG_NAME}
