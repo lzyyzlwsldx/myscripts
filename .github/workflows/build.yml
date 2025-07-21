@@ -1,4 +1,4 @@
-name: Build for Windows, Linux, and macOS
+name: Build for Windows, Linux (CentOS 7), and macOS
 
 on:
   push:
@@ -7,10 +7,11 @@ on:
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ windows-latest, ubuntu-latest, macos-latest ]
+        os: [windows-latest, macos-latest, ubuntu-latest]
+
+    runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v3
@@ -23,13 +24,36 @@ jobs:
       - name: Install dependencies
         run: pip install pyinstaller
 
-      - name: Build executable
+      - name: Build executable (Win/macOS only)
+        if: matrix.os != 'ubuntu-latest'
         run: pyinstaller replace_vars.py --onefile
 
-      - name: Upload artifact
+      - name: Upload artifact (Win/macOS)
+        if: matrix.os != 'ubuntu-latest'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}-build
           path: |
-            dist/replace_vars.exe
-            dist/replace_vars
+            dist/replace_vars*
+
+  build-linux-centos7:
+    name: Build on CentOS 7 (for Linux compatibility)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Build in CentOS 7 container
+        run: |
+          docker run --rm -v "$PWD":/app -w /app centos:7 bash -c "
+            yum install -y gcc gcc-c++ make wget python3 python3-devel &&
+            pip3 install pyinstaller &&
+            pyinstaller replace_vars.py --onefile &&
+            mv dist/replace_vars dist/replace_vars-linux-centos7
+          "
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-centos7-build
+          path: replace_vars-linux-centos7
