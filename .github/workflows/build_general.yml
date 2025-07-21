@@ -40,6 +40,7 @@ jobs:
         run: pip install pyinstaller
 
       - name: Build executable (Win/macOS only)
+        shell: bash
         run: |
           OUTPUT_NAME=replace_vars-${PLATFORM_NAME}-${TAG_NAME}
           pyinstaller replace_vars.py --onefile --name $OUTPUT_NAME
