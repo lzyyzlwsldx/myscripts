@@ -53,7 +53,7 @@ jobs:
             pip3 install wheel &&
             pip3 install pyinstaller &&
             pyinstaller replace_vars.py --onefile &&
-            mv dist/replace_vars dist/replace_vars-linux-centos7
+            mv dist/replace_vars /app/replace_vars-linux-centos7
           "
 
       - name: Upload Linux artifact
