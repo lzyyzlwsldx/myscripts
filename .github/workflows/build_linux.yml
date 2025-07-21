@@ -20,18 +20,32 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build in CentOS 7 (for ${{ matrix.arch }})
+      - name: Build with Docker
         run: |
-          docker run --rm --platform linux/${{ matrix.arch }} -v "$PWD":/app -w /app centos:7 bash -c "
-            curl -o /etc/yum.repos.d/CentOS-Base.repo https://mirrors.aliyun.com/repo/Centos-7.repo &&
-            sed -i 's/^gpgcheck=1/gpgcheck=0/' /etc/yum.repos.d/CentOS-Base.repo &&
-            yum clean all && yum makecache fast &&
-            yum install -y gcc gcc-c++ make wget python3 python3-devel &&
+          ARCH=${{ matrix.arch }}
+          IMAGE=""
+
+          if [[ "$ARCH" == "amd64" ]]; then
+            IMAGE="centos:7"
+          elif [[ "$ARCH" == "arm64" ]]; then
+            IMAGE="rockylinux:8"
+          fi
+
+          docker run --rm --platform linux/$ARCH -v "$PWD":/app -w /app $IMAGE bash -c "
+            set -e
+            if [ \"$IMAGE\" = \"centos:7\" ]; then
+              curl -o /etc/yum.repos.d/CentOS-Base.repo https://mirrors.aliyun.com/repo/Centos-7.repo &&
+              sed -i 's/^gpgcheck=1/gpgcheck=0/' /etc/yum.repos.d/CentOS-Base.repo &&
+              yum clean all && yum makecache fast &&
+              yum install -y gcc gcc-c++ make wget python3 python3-devel
+            else
+              dnf install -y gcc gcc-c++ make wget python3 python3-devel
+            fi &&
             pip3 install --upgrade pip &&
             pip3 install wheel &&
             pip3 install pyinstaller &&
-            pyinstaller replace_vars.py --onefile &&
-            mv dist/replace_vars /app/replace_vars-linux-${{ matrix.arch }}
+            pyinstaller replace_vars.py --onefile --name replace_vars-linux-$ARCH &&
+            mv dist/replace_vars-linux-$ARCH /app/
           "
 
       - name: Upload artifact
