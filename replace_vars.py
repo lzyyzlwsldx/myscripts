@@ -12,10 +12,33 @@ CONTROL_COLUMNS_MAP = {'var': '序号 变量键（KEY） 变量描述 变量类�
                        'script': '步骤 脚本路径 是否幂等 是否依赖 执行机类型 执行用户 K8S命名空间 负载资源名称 备注'}
 # deploy-execution-plan.csv columns
 DEPLOY_RESOURCE_TYPE = {'namespace': 0,
-                        'configmap': 1, 'secret': 1, 'pvc': 1,
+                        'sa': 1.0, 'serviceaccount': 1.0, 'role': 1.0, 'cr': 1.0, 'clusterrole': 1.0,
+                        'rolebinding': 1.1, 'crb': 1.1, 'clusterrolebinding': 1.1,
+                        'configmap': 1, 'secret': 1, 'pvc': 1, 'persistentvolumeclaim': 1,
                         'deployment': 2, 'statefulset': 2, 'daemonset': 2, 'job': 2, 'cronjob': 2, 'service': 2,
                         'hpa': 3, 'vpa': 3,
                         'ingress': 4}
+
+K8S_RESOURCE_SUPPORT = {'Namespace',
+                        'SA or ServiceAccount', 'Role', 'CR or ClusterRole',
+                        'RoleBinding', 'CRB or ClusterRoleBinding',
+                        'ConfigMap', 'Secret', 'PVC or PersistentVolumeClaim',
+                        'Deployment', 'StatefulSet', 'DaemonSet', 'Job', 'CronJob', 'Service',
+                        'HPA', 'VPA',
+                        'Ingress'}
+K8S_ABBR = [{'sa', 'serviceaccount'},
+            {'cr', 'clusterrole'}, {'crb', 'clusterrolebinding'},
+            {'pvc', 'persistentvolumeclaim'}, ]
+
+
+def check_k8s_yaml_name(n1, n2):
+    n1_lower, n2_lower = n1.lower(), n2.lower()
+    for i in K8S_ABBR:
+        if n1_lower in i and n2_lower in i:
+            return True
+    return n1_lower == n2_lower
+
+
 DEPLOY_NEED_IMAGE = {'deployment', 'statefulset', 'daemonset', 'job', 'cronjob'}
 DEPLOY_TYPE = {'更新', '下线', '重启'}
 # global-vars.csv columns
@@ -80,6 +103,12 @@ def query_template_filepaths(root_dir):
     return filepaths
 
 
+def deploy_compare_lte(a, b):
+    if type(a) != int and type(b) != int:
+        return a <= b
+    return int(a) <= int(b)
+
+
 def load_data_from_csv(filepath: str, control_type='var'):
     """
     读取全局变量字典
@@ -117,20 +146,22 @@ def load_data_from_csv(filepath: str, control_type='var'):
         elif control_type == 'deploy':
             for i in range(5):
                 assert row[i], '{} 不存在，请处理！'.format(error_log(i, row[i]))
-            assert row[1].lower() in DEPLOY_RESOURCE_TYPE.keys(), ('{} 不在支持资源类型范围内，请调整！'
-                                                                   .format(error_log(1, row[1])))
+            assert row[1].lower() in DEPLOY_RESOURCE_TYPE.keys(), ('{} 不在支持资源类型范围内，请调整！支持的资源类型为 {}'
+                                                                   .format(error_log(1, row[1]),
+                                                                           K8S_RESOURCE_SUPPORT))
             assert row[4] in DEPLOY_TYPE, '{} 不在支持部署类型范围内，请调整！'.format(error_log(4, row[4]))
             if '更新' == row[4]:
-                assert DEPLOY_RESOURCE_TYPE[row[1].lower()] >= deploy_seq_last, \
+                assert deploy_compare_lte(deploy_seq_last, DEPLOY_RESOURCE_TYPE[row[1].lower()]), \
                     ('{} 部署先后顺序有误，请根据资源类型调整部署顺序！'.format(error_log(1, row[1])))
-                deploy_seq_last = DEPLOY_RESOURCE_TYPE[data_lines[idx][1].lower()]
+                deploy_seq_last = max(deploy_seq_last, DEPLOY_RESOURCE_TYPE[data_lines[idx][1].lower()])
                 # yaml不存在
                 assert row[5], '{} 不存在，请处理！'.format(error_log(5, row[5]))
                 assert os.path.exists(os.path.join(install_path, row[5])), ('{} 相对路径不存在，请调整！'
                                                                             .format(error_log(5, row[5])))
                 filename, ext = os.path.splitext(row[5])
-                assert os.path.basename(filename).split('-')[-1].lower() == row[1].lower() \
-                       and ext[2:] in {'aml', 'ml'}, '{} 不符合 YAML 命名规范，请调整！'.format(error_log(5, row[5]))
+                # assert os.path.basename(filename).split('-')[-1].lower() == row[1].lower() \
+                assert check_k8s_yaml_name(os.path.basename(filename).split('-')[-1], row[1]) \
+                       and ext[2:] in {'aml', 'ml'}, '{} 不符合 YAML 命名规范，请调整后缀！'.format(error_log(5, row[5]))
                 # deployment，镜像包
                 assert row[1].lower() not in DEPLOY_NEED_IMAGE or row[6], ('{} 不存在，请处理！'
                                                                            .format(error_log(6, row[6])))
@@ -206,7 +237,7 @@ def replace_placeholders_in_file(template_path: str, variables: dict, defined_ke
         undefined_path_keys = matched_keys.difference(defined_keys)
         defined_keys.difference_update(matched_keys)
         defined_keys.update(undefined_path_keys)
-        defined_keys and log.warning(' ##### 变量 %s 与【文件路径】%s 不匹配，对应【文件路径】有误或缺失！请修正！！！',
+        defined_keys and log.warning(' ##### 变量 %s 与【文件路径】%s 不匹配，变量对应的【文件路径】有误或缺失！请修正！',
                                      defined_keys, template_path)
         missing_keys and log.error(' ##### 发现未定义变量！！！请确认: %s', missing_keys)
     except UnicodeDecodeError as e:
@@ -217,7 +248,7 @@ def replace_placeholders_in_file(template_path: str, variables: dict, defined_ke
 
 
 def dispose_controls(install_dir, check):
-    log.info('*' * 55 + '  执行开始  ' + '*' * 55)
+    log.info('*' * 40 + ' 执行开始，交付物路径: {} '.format(os.path.abspath(install_dir)) + '*' * 40)
     check_standard(install_dir)
     filepaths = query_template_filepaths(install_dir)
     all_vars, empty_idx_set = load_data_from_csv(os.path.join(install_dir, 'controls/global-vars.csv'))
@@ -243,12 +274,12 @@ def dispose_controls(install_dir, check):
     unused_keys = vars_map.keys() - all_matched_keys
     log.info(30 * '~' + '%s' + 30 * '~', ' 【全局变量替换】执行结果 ')
     log.info('共计处理 %d 个模版文件，成功 %d 个， 失败 %d 个！', len(filepaths), ok_num, len(filepaths) - ok_num)
-    log.info('全局变量表中共定义 %d 个变量，成功替换 %d 个，有 %d 个已定义未替换！有 %d 个未定义未替换！(后两项应为 0 )',
+    log.info('全局变量表中共定义 %d 个变量，成功替换 %d 个，有 %d 个已定义未替换！有 %d 个未定义未替换！(后两项正常为 0 )',
              len(vars_map.keys()), len(all_matched_keys), len(unused_keys), len(all_missing_keys))
-    unused_keys and log.error('%s 变量在全局变量表中定义，但未在部署模版中发现！请确认！！！', unused_keys)
+    unused_keys and log.warning('%s 变量在全局变量表中定义，但未在部署模版中发现！请确认！！！', unused_keys)
     all_missing_keys and log.error('%s 变量在部署模版中发现！但未在全局变量表中定义！请确认！！！', all_missing_keys)
-    all_defined_keys and log.warning(
-        '变量 %s 与【文件路径】不匹配，对应【文件路径】有误或缺失！请修正！！！具体问题请向上找日志。', all_defined_keys)
+    all_defined_keys and log.warning('变量 %s 与【文件路径】不匹配，变量对应的【文件路径】有误或缺失！'
+                                     '请修正！具体问题请向上找日志。', all_defined_keys)
 
 
 def main(install_dir, check=False):
