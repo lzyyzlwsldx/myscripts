@@ -58,10 +58,6 @@ class ErrorType(object):
     SCRIPT_ENV_TYPE_ERROR = 10  # 脚本执行环境类型错误
 
 
-class TemplateFileDecodeError(Exception):
-    pass
-
-
 ERROR_LOG_MAP = {
     ErrorType.SUCCESS: '成功',
     ErrorType.VALUE_NOT_EXIST: '值不存在，请处理！',
@@ -227,23 +223,6 @@ def load_data_from_csv(filepath: str, control_type='var'):
     return data_lines, empty_idx_set, (error_mask, error_logs)
 
 
-def replace_placeholders(text, variables, replace_mode):
-    missing_keys, matched_keys, replace_num = set(), set(), 0
-
-    def replacer(match):
-        key = match.group(1)
-        nonlocal replace_num
-        if key in variables:
-            replace_num += 1
-            matched_keys.add(key)
-            return variables[key]
-        else:
-            missing_keys.add(key)
-            return match.group(0)
-
-    return PATTERN_MAP[replace_mode].sub(replacer, text), matched_keys, missing_keys, replace_num
-
-
 def read_controls_csv(filepath: str):
     try:
         with open(filepath, 'r', newline='', encoding='utf-8-sig') as csvfile:
@@ -252,18 +231,6 @@ def read_controls_csv(filepath: str):
             return content
     except UnicodeDecodeError:
         raise Exception('中控类文件编码不在支持范围内，请转换为 utf-8 编码！')
-
-
-def readfile_with_autoencoding(filepath: str):
-    fmt_list = ['utf-8-sig', 'gbk']
-    for fmt in fmt_list:
-        try:
-            with open(filepath, 'r', encoding=fmt) as f:
-                content = f.read()
-                return content, fmt
-        except UnicodeDecodeError:
-            ...
-    raise TemplateFileDecodeError('文件编码不在支持范围内，模版文件无法正常打开！')
 
 
 def stream_replace(template_path, variables, replace_mode='字符串和控制符', check: bool = True,
@@ -276,7 +243,7 @@ def stream_replace(template_path, variables, replace_mode='字符串和控制符
     pattern, start_tokens = PATTERN_MAP[replace_mode], START_TOKENS_MAP[replace_mode]
     missing_keys, matched_keys, replace_num = set(), set(), 0
 
-    def replacer(match):
+    def _replacer(match):
         key = (match.group(1) or match.group(2)).decode()
         nonlocal replace_num
         if key in variables:
@@ -298,7 +265,7 @@ def stream_replace(template_path, variables, replace_mode='字符串和控制符
             # 处理当前缓冲中的完整匹配
             write_pos = 0
             for m in pattern.finditer(buf):
-                replace_text = replacer(m)
+                replace_text = _replacer(m)
                 _write(fout, buf[write_pos:m.start()])
                 _write(fout, replace_text)
                 write_pos = m.end()
@@ -328,9 +295,6 @@ def replace_placeholders_in_file(template_path, variables: dict, defined_keys: s
     """
     matched_keys, missing_keys, status, replace_num, logs = set(), set(), False, 0, []
     try:
-        # content, fmt = readfile_with_autoencoding(template_path)
-        # replaced_text, matched_keys, missing_keys, replace_num = replace_placeholders(content, variables, replace_mode)
-        # not check and open(template_path, 'w', encoding=fmt).write(replaced_text)
         replace_num, matched_keys, missing_keys = stream_replace(template_path, variables, replace_mode, check)
         status = True
         logs.append([f'成功，替换位置 {replace_num} 个', logging.INFO])
@@ -338,16 +302,14 @@ def replace_placeholders_in_file(template_path, variables: dict, defined_keys: s
         defined_keys.difference_update(matched_keys)
         defined_keys.update(undefined_path_keys)
         missing_keys and logs.append([f'发现未定义变量！！！请确认: {missing_keys}', logging.WARNING])
-    # except TemplateFileDecodeError as e:
-    #     logs.append([f'尝试加载模版失败！warning: {str(e)}', logging.WARNING])
     except Exception as e:
         logs.append([f'失败：error: {str(e)}', logging.ERROR])
     return matched_keys, missing_keys, status, replace_num, logs
 
 
 def fix_global_csv(csv_path, var_fps_map):
-    with (open(csv_path, newline='', encoding="utf-8-sig") as fin,
-          tempfile.NamedTemporaryFile('w', newline='', encoding="utf-8-sig") as fout):
+    with open(csv_path, newline='', encoding="utf-8-sig") as fin, \
+            tempfile.NamedTemporaryFile('w', newline='', encoding="utf-8-sig") as fout:
         reader = csv.DictReader(fin)
         writer = csv.DictWriter(fout, fieldnames=reader.fieldnames)
         writer.writeheader()
@@ -447,18 +409,18 @@ def exec_replace(install_dir, replace_mode='字符串和控制符', check=False)
         return False, [*logs, [str(e), logging.ERROR], ['全局变量替换失败!!!', logging.INFO]]
 
 
+def get_real_app_dir():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 def main(install_dir, replace_mode='字符串和控制符', check=False):
     try:
         status, logs_with_level = exec_replace(install_dir, replace_mode, check)
         [log.log(l[1], l[0]) for l in logs_with_level]
     except Exception as e:
         log.exception(e)
-
-
-def get_real_app_dir():
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
 
 
 if __name__ == '__main__':
