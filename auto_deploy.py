@@ -12,6 +12,7 @@ config.load_kube_config(config_file="/Users/lizhengyang/MyProjects/myscripts/kub
 v1 = client.CoreV1Api()
 print([ns.metadata.name for ns in v1.list_namespace().items])
 # #
+
 # # from kubernetes import client
 # # from kubernetes.client import Configuration
 # # import urllib3
