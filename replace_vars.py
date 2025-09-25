@@ -258,7 +258,7 @@ def stream_replace(template_path, variables, replace_mode='字符串和控制符
         check or f.write(contents)
 
     buf = b""
-    with open(template_path, 'rb') as fin, tempfile.NamedTemporaryFile('wb') as fout:
+    with open(template_path, 'rb') as fin, tempfile.NamedTemporaryFile('wb', delete=False) as fout:
         while True:
             chunk = fin.read(chunk_size)
             buf += chunk
