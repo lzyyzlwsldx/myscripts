@@ -80,24 +80,6 @@ class CheckError(object):
         self.error_msg = ERROR_LOG_MAP[error_type].format(*error_values)
 
 
-def set_logger():
-    # 设置日志格式
-    log_format = '%(asctime)s || %(levelname)s || %(message)s'
-    log_level = logging.INFO
-    logger = logging.getLogger()
-    logger.setLevel(log_level)
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(logging.Formatter(log_format))
-    file_handler = logging.FileHandler("replace_vars.log", encoding="utf-8")
-    file_handler.setFormatter(logging.Formatter(log_format))
-    logger.addHandler(console_handler)
-    logger.addHandler(file_handler)
-    return logger
-
-
-log = set_logger()
-
-
 def check_k8s_kind_same(n1, n2):
     """检查的两个类型名字是否相同"""
     n1_lower, n2_lower = n1.lower(), n2.lower()
@@ -271,14 +253,13 @@ def stream_replace(template_path, variables, replace_mode='字符串和控制符
                 write_pos = m.end()
             if not chunk:
                 _write(fout, buf[write_pos:])
-                fout.flush()
-                check or shutil.copy(fout.name, template_path)
                 break
             # 尾巴处理, 找尾巴里“最后一个起始 token”的位置（同型），把它之后的内容留到下轮
             tail = buf[write_pos:]
             last_start = max((tail.rfind(st) for st in start_tokens), default=-3)
             buf = tail[last_start:]
             _write(fout, tail[:last_start])
+    check or shutil.copyfile(fout.name, template_path)
     return replace_num, matched_keys, missing_keys
 
 
@@ -309,7 +290,7 @@ def replace_placeholders_in_file(template_path, variables: dict, defined_keys: s
 
 def fix_global_csv(csv_path, var_fps_map):
     with open(csv_path, newline='', encoding="utf-8-sig") as fin, \
-            tempfile.NamedTemporaryFile('w', newline='', encoding="utf-8-sig") as fout:
+            tempfile.NamedTemporaryFile('w', newline='', encoding="utf-8-sig", delete=False) as fout:
         reader = csv.DictReader(fin)
         writer = csv.DictWriter(fout, fieldnames=reader.fieldnames)
         writer.writeheader()
@@ -318,8 +299,7 @@ def fix_global_csv(csv_path, var_fps_map):
             if key in var_fps_map:
                 row["文件路径"] = '\n'.join(var_fps_map[key])
                 writer.writerow(row)
-        fout.flush()
-        shutil.copyfile(fout.name, csv_path)
+    shutil.copyfile(fout.name, csv_path)
 
 
 def dispose_controls(install_dir, replace_mode='字符串和控制符', check=True):
@@ -409,6 +389,21 @@ def exec_replace(install_dir, replace_mode='字符串和控制符', check=False)
         return False, [*logs, [str(e), logging.ERROR], ['全局变量替换失败!!!', logging.INFO]]
 
 
+def set_logger():
+    # 设置日志格式
+    log_format = '%(asctime)s || %(levelname)s || %(message)s'
+    log_level = logging.INFO
+    logger = logging.getLogger()
+    logger.setLevel(log_level)
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter(log_format))
+    file_handler = logging.FileHandler("replace_vars.log", encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter(log_format))
+    logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
+    return logger
+
+
 def get_real_app_dir():
     if getattr(sys, 'frozen', False):
         return os.path.dirname(sys.executable)
@@ -416,6 +411,7 @@ def get_real_app_dir():
 
 
 def main(install_dir, replace_mode='字符串和控制符', check=False):
+    log = set_logger()
     try:
         status, logs_with_level = exec_replace(install_dir, replace_mode, check)
         [log.log(l[1], l[0]) for l in logs_with_level]
