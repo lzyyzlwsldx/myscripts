@@ -108,13 +108,13 @@ def query_template_paths(root_dir):
     :param root_dir:
     :return:
     """
-    paths = []
+    paths = set()
 
     def walk_files(template_dir):
         for subdir, _, files in os.walk(template_dir):
             for filename in files:
                 filepath = os.path.join(subdir, filename)
-                os.path.basename(filepath) != 'global-vars.csv' and paths.append(filepath)
+                os.path.basename(filepath) != 'global-vars.csv' and paths.add(filepath)
 
     walk_files(os.path.join(root_dir, 'k8s-resources'))
     walk_files(os.path.join(root_dir, 'scripts'))
@@ -215,6 +215,13 @@ def read_controls_csv(filepath: str):
         raise Exception('中控类文件编码不在支持范围内，请转换为 utf-8 编码！')
 
 
+def decode_key(v):
+    try:
+        return v.decode()
+    except UnicodeDecodeError as e:
+        raise e
+
+
 def stream_replace(template_path, variables, replace_mode='字符串和控制符', check: bool = True,
                    chunk_size: int = 1024 * 1024 * 100, ) -> Tuple[int, Set[bytes], Set[bytes]]:
     """
@@ -226,12 +233,12 @@ def stream_replace(template_path, variables, replace_mode='字符串和控制符
     missing_keys, matched_keys, replace_num = set(), set(), 0
 
     def _replacer(match):
-        key = (match.group(1) or match.group(2)).decode()
+        key = decode_key(match.group(1) or match.group(2))
         nonlocal replace_num
         if key in variables:
             replace_num += 1
             matched_keys.add(key)
-            return variables[key].encode("utf-8")
+            return variables[key].encode()
         else:
             missing_keys.add(key)
             return match.group(0)
@@ -274,7 +281,7 @@ def replace_placeholders_in_file(template_path, variables: dict, defined_keys: s
     :param check:
     :return:
     """
-    matched_keys, missing_keys, status, replace_num, logs = set(), set(), False, 0, []
+    matched_keys, missing_keys, status, replace_num, exist_vars_fp, logs = set(), set(), False, 0, [], []
     try:
         replace_num, matched_keys, missing_keys = stream_replace(template_path, variables, replace_mode, check)
         status = True
@@ -283,36 +290,38 @@ def replace_placeholders_in_file(template_path, variables: dict, defined_keys: s
         defined_keys.difference_update(matched_keys)
         defined_keys.update(undefined_path_keys)
         missing_keys and logs.append([f'发现未定义变量！！！请确认: {missing_keys}', logging.WARNING])
+    except UnicodeDecodeError as e:
+        logs.append([f'警告：warning: {str(e)}', logging.WARNING])
     except Exception as e:
         logs.append([f'失败：error: {str(e)}', logging.ERROR])
     return matched_keys, missing_keys, status, replace_num, logs
 
 
 def fix_global_csv(csv_path, var_fps_map):
-    with open(csv_path, newline='', encoding="utf-8-sig") as fin, \
-            tempfile.NamedTemporaryFile('w', newline='', encoding="utf-8-sig", delete=False) as fout:
+    with open(csv_path, newline='', encoding='utf-8-sig') as fin, \
+            tempfile.NamedTemporaryFile('w', newline='', encoding='utf-8-sig', delete=False) as fout:
         reader = csv.DictReader(fin)
         writer = csv.DictWriter(fout, fieldnames=reader.fieldnames)
         writer.writeheader()
         for row in reader:
-            key = row["变量键（KEY）"]
-            if key in var_fps_map:
-                row["文件路径"] = '\n'.join(var_fps_map[key])
-                writer.writerow(row)
+            key = row['变量键（KEY）']
+            row['文件路径'] = '\n'.join(var_fps_map[key]) if key in var_fps_map else row['文件路径']
+            writer.writerow(row)
     shutil.copyfile(fout.name, csv_path)
 
 
-def dispose_controls(install_dir, replace_mode='字符串和控制符', check=True):
+def dispose_controls(install_dir, replace_mode='字符串和控制符', check=True, dispose_fps=()):
     """
     处理中控类文件
     :param install_dir: 交付物目录路径
     :param replace_mode: 替换模式，字符串和控制符、仅控制符
-    :param check:
+    :param check: 是否检查
+    :param dispose_fps: 需要处理的模版文件
     :return:
     """
     deploy_error_ret, script_error_ret = check_standard(install_dir)
     total_logs, file_logs = [], []
-    template_paths = query_template_paths(install_dir)
+    template_paths = query_template_paths(install_dir) if check else dispose_fps
     all_vars, empty_idx_set, var_error_ret = load_data_from_csv(os.path.join(install_dir, 'controls/global-vars.csv'))
     vars_map, file_vars_map = dict(), dict()
     for i, value in enumerate(all_vars):
@@ -324,13 +333,18 @@ def dispose_controls(install_dir, replace_mode='字符串和控制符', check=Tr
         [file_vars_map.setdefault(os.path.join(install_dir, vf), set()).add(value[1]) for vf in var_files]
     all_missing_keys, all_matched_keys, all_defined_keys = set(), set(), set()
     # 替换成功的文件数量，替换成功的变量数量
-    ok_file_num, all_replace_num = 0, 0
+    ok_file_num, all_replace_num, warn_fp, error_fp = 0, 0, [], []
     # 变量:文件路径 map
     var_fps_map = dict()
     for fp in template_paths:
         defined_keys = file_vars_map.get(fp, set())
         replace_ret = replace_placeholders_in_file(fp, vars_map, defined_keys, replace_mode, check)
         matched_keys, missing_keys, status, replace_num, replace_logs = replace_ret
+        for l in replace_logs:
+            if l[1] == logging.WARNING:
+                warn_fp.append(fp)
+            elif l[1] == logging.ERROR:
+                error_fp.append(fp)
         # 获取变量所在的文件相对路径
         [var_fps_map.setdefault(mk, set()).add(os.path.relpath(fp, install_dir)) for mk in matched_keys]
         all_matched_keys = all_matched_keys.union(matched_keys)
@@ -346,10 +360,14 @@ def dispose_controls(install_dir, replace_mode='字符串和控制符', check=Tr
     total_logs.append([f'全局变量表中共计定义 {len(vars_map.keys())} 个变量，成功替换 {len(all_matched_keys)} 个，'
                        f'有 {len(unused_keys)} 个已定义未替换！有 {len(all_missing_keys)} 个未定义未替换！(后两项正常应为 0 )',
                        logging.INFO])
-    unused_keys and total_logs.append([f'{unused_keys} 变量在全局变量表中定义，但未在部署模版中发现！'
-                                       f'如无需使用请删除，避免引入无关变量，请确认！！！', logging.WARNING])
-    all_missing_keys and total_logs.append([f'{all_missing_keys} 变量在模版文件中发现，但未在全局变量表中定义！'
-                                            f'替换变量时将无法处理这些占位符，请确认！！！', logging.WARNING])
+    unused_keys and total_logs.append(
+        [f'以下变量在全局变量表中定义，但未在部署模版中发现！如无需使用请删除，避免引入无关变量，'
+         f'请确认！！！  \n{unused_keys}', logging.WARNING])
+    all_missing_keys and total_logs.append(
+        [f'以下变量在模版文件中发现，但未在全局变量表中定义！替换变量时将无法处理这些占位符，'
+         f'请确认！！！  \n{all_missing_keys}', logging.WARNING])
+    warn_fp and total_logs.append([f'处理以下模版文件时出现警告，请关注日志！  \n{warn_fp}', logging.WARNING])
+    error_fp and total_logs.append([f'处理以下模版文件时出现错误，请修复！  \n{error_fp}', logging.ERROR])
     return [deploy_error_ret, script_error_ret, var_error_ret], file_logs, total_logs, var_fps_map
 
 
@@ -382,11 +400,15 @@ def exec_replace(install_dir, replace_mode='字符串和控制符', check=False)
                     break
         assert not exist_error, '模版文件检查失败!'
         logs.extend(total_logs)
-        check or fix_global_csv(os.path.join(install_dir, 'controls/global-vars.csv'), var_fps_map)
-        check or dispose_controls(install_dir, replace_mode, False)
-        return True, [*logs, ['全局变量替换成功!!!', logging.INFO]]
+        if not check:
+            fix_global_csv(os.path.join(install_dir, 'controls/global-vars.csv'), var_fps_map)
+            dispose_fps = set()
+            for fps in var_fps_map.values():
+                dispose_fps.update([os.path.join(install_dir, rp) for rp in fps])
+            dispose_controls(install_dir, replace_mode, False, dispose_fps)
+        return True, [*logs, ['全局变量替换工具执行成功！', logging.INFO]]
     except Exception as e:
-        return False, [*logs, [str(e), logging.ERROR], ['全局变量替换失败!!!', logging.INFO]]
+        return False, [*logs, [str(e), logging.ERROR], ['全局变量替换工具执行成功！', logging.INFO]]
 
 
 def set_logger():
