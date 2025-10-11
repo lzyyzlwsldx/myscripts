@@ -408,7 +408,7 @@ def exec_replace(install_dir, replace_mode='字符串和控制符', check=False)
             dispose_controls(install_dir, replace_mode, False, dispose_fps)
         return True, [*logs, ['全局变量替换工具执行成功！', logging.INFO]]
     except Exception as e:
-        return False, [*logs, [str(e), logging.ERROR], ['全局变量替换工具执行成功！', logging.INFO]]
+        return False, [*logs, [str(e), logging.ERROR], ['全局变量替换工具执行失败！', logging.ERROR]]
 
 
 def set_logger():
