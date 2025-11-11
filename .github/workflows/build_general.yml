@@ -37,7 +37,7 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: pip install pyinstaller
+        run: pip install pyinstaller && pip install pyyaml
 
       - name: Build executable (Win/macOS/Ubuntu only)
         shell: bash

@@ -49,6 +49,7 @@ jobs:
             pip3 install --upgrade pip &&
             pip3 install wheel &&
             pip3 install pyinstaller &&
+            pip3 install pyyaml &&
             pyinstaller replace_vars.py --onefile --name replace_vars-linux-$ARCH &&
             mv dist/replace_vars-linux-$ARCH /app/
           "

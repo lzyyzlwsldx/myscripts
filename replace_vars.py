@@ -393,8 +393,8 @@ def replace_placeholders_in_file(template_path, variables: dict, defined_keys: s
 
 
 def fix_global_csv(csv_path, var_fps_map):
-    with (open(csv_path, newline='', encoding='utf-8-sig') as fin,
-          tempfile.NamedTemporaryFile('w', newline='', encoding='utf-8-sig', delete=False) as fout):
+    with open(csv_path, newline='', encoding='utf-8-sig') as fin, \
+            tempfile.NamedTemporaryFile('w', newline='', encoding='utf-8-sig', delete=False) as fout:
         reader = csv.DictReader(fin)
         writer = csv.DictWriter(fout, fieldnames=reader.fieldnames)
         writer.writeheader()
