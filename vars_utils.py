@@ -325,7 +325,7 @@ def find_named_container(document, resource_type, expected_name, token_key_map, 
 
 
 def check_deploy_resource_names(resource_type, resource_name, documents, token_key_map, variables,
-                                check_containers=True):
+                               check_containers=True):
     """检查执行计划资源名称与 YAML metadata.name、containers.name 是否一致。"""
     expected_name, target_document, actual_names, unresolved_metadata = resolve_deploy_resource(
         resource_type, resource_name, documents, token_key_map, variables,
@@ -612,8 +612,7 @@ def append_deploy_yaml_content_errors(row, row_errors, yaml_path, context):
             if document is not None:
                 metadata = document.get('metadata')
                 namespace = metadata.get('namespace') if isinstance(metadata, dict) else None
-                actual_namespace, missing_actual = resolve_yaml_name(namespace, token_key_map,
-                                                                     context.global_var_values)
+                actual_namespace, missing_actual = resolve_yaml_name(namespace, token_key_map, context.global_var_values)
                 expected_namespace, missing_expected = resolve_template_text(row['命名空间'], context.global_var_values)
                 if not missing_actual and not missing_expected and actual_namespace != expected_namespace:
                     row_errors['命名空间'].append(CheckError(
@@ -1205,6 +1204,7 @@ def dispose_controls(install_dir, replace_mode='字符串和控制符', check=Tr
     :param replace_mode: 替换模式，字符串和控制符、仅控制符
     :param check: 是否检查
     :param dispose_fps: 需要处理的模版文件
+    :param strict: 发布检查启用脚本语法校验；属地模式只保留基本检查，不调用外部工具
     :return:
     """
     deploy_error_ret, script_error_ret = check_standard(install_dir, strict=strict)
@@ -1235,8 +1235,9 @@ def dispose_controls(install_dir, replace_mode='字符串和控制符', check=Tr
         relative_parts = Path(os.path.relpath(fp, install_dir)).parts
         validator = (
             partial(check_script_syntax, source_path=fp)
-            if relative_parts[0] == 'scripts' and Path(fp).suffix.lower() in {'.js', '.sql', '.sh', '.yaml', '.yml',
-                                                                              '.json'}
+            if strict and relative_parts[0] == 'scripts' and Path(fp).suffix.lower() in {
+                '.js', '.sql', '.sh', '.yaml', '.yml', '.json',
+            }
             else None
         )
         if not strict and Path(fp).suffix.lower() in {'.yaml', '.yml'}:
@@ -1278,8 +1279,7 @@ def dispose_controls(install_dir, replace_mode='字符串和控制符', check=Tr
 
 
 def exec_replace(install_dir, replace_mode='字符串和控制符', check=False,
-                 old_image_prefix=None, new_image_prefix=None, *, strict=True) -> tuple[
-    bool, list[list[str | int] | Any]]:
+                 old_image_prefix=None, new_image_prefix=None, *, strict=True) -> tuple[bool, list[list[str | int] | Any]]:
     """
     :param install_dir: 物料路径
     :param replace_mode: 字符串和控制符 or 仅控制符
@@ -1293,8 +1293,7 @@ def exec_replace(install_dir, replace_mode='字符串和控制符', check=False,
                         ['script-execution-plan.csv 检查失败：', logging.ERROR],
                         ['global-vars.csv 检查失败：', logging.ERROR]]
     try:
-        error_rets, file_logs, total_logs, var_fps_map = dispose_controls(install_dir, replace_mode, True,
-                                                                          strict=strict)
+        error_rets, file_logs, total_logs, var_fps_map = dispose_controls(install_dir, replace_mode, True, strict=strict)
         for i, error_ret in enumerate(error_rets):
             mask, error_logs = error_ret
             if error_logs:

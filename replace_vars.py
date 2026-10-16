@@ -33,7 +33,7 @@ def main(install_dir, replace_mode='字符串和控制符', check=False, old_ima
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description='属地全局变量替换：检查变量、文件引用和替换后语法，不校验发布规范。',
+        description='属地全局变量替换：检查 CSV 结构、变量、文件引用和 YAML 基本格式。',
     )
     parser.add_argument('install_dir', nargs='?', default=get_real_app_dir(), help='交付物料包路径')
     parser.add_argument('--check', action='store_true', help='仅检查，不修改物料文件')
