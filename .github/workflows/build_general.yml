@@ -9,7 +9,7 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [ windows-latest, macos-latest, ubuntu-latest ]
+        os: [ windows-latest, macos-15-intel, macos-15, ubuntu-latest ]
 
     runs-on: ${{ matrix.os }}
 
@@ -23,8 +23,10 @@ jobs:
           TAG_NAME=${GITHUB_REF#refs/tags/}
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             PLATFORM_NAME="windows-amd64"
-          elif [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+          elif [[ "${{ matrix.os }}" == "macos-15-intel" ]]; then
             PLATFORM_NAME="macos-amd64"
+          elif [[ "${{ matrix.os }}" == "macos-15" ]]; then
+            PLATFORM_NAME="macos-arm64"
           else
             PLATFORM_NAME="linux-amd64"
           fi
@@ -32,9 +34,11 @@ jobs:
           echo "PLATFORM_NAME=$PLATFORM_NAME" >> $GITHUB_ENV
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          # setup-python provides macOS ARM64 packages starting with Python 3.11.
+          python-version: ${{ matrix.os == 'macos-15' && '3.11' || '3.10' }}
+          architecture: ${{ matrix.os == 'macos-15' && 'arm64' || 'x64' }}
 
       - name: Install dependencies
         run: pip install pyinstaller && pip install pyyaml
