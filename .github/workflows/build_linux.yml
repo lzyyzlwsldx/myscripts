@@ -50,12 +50,12 @@ jobs:
             pip3 install wheel &&
             pip3 install pyinstaller &&
             pip3 install pyyaml &&
-            pyinstaller replace_vars.py --onefile --name replace_vars-linux-$ARCH &&
-            mv dist/replace_vars-linux-$ARCH /app/
+            pyinstaller replace_vars.py --onefile --name replace_vars-linux-$ARCH-$TAG_NAME &&
+            mv dist/replace_vars-linux-$ARCH-$TAG_NAME /app/
           "
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: linux-${{ matrix.arch }}-build
-          path: replace_vars-linux-${{ matrix.arch }}
+          name: replace_vars-linux-${{ matrix.arch }}-${{ env.TAG_NAME }}
+          path: replace_vars-linux-${{ matrix.arch }}-${{ env.TAG_NAME }}
