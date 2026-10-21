@@ -380,16 +380,23 @@ def check_deployment_health_probes(resource_type, resource_name, documents, toke
     return [CheckError(ErrorType.DEPLOY_HEALTH_PROBE_ERROR, (', '.join(missing_probes),))]
 
 
-def check_standard(install_dir, *, strict=True):
+def check_standard(install_dir, *, strict=True, validate_plan_rows=True):
     assert os.path.exists(install_dir), '{} 部署包目录不存在，请输入正确路径！'.format(install_dir)
     assert os.path.exists(os.path.join(install_dir, 'controls/global-vars.csv')), '未发现【全局变量清单】global-vars.csv，请确认！！！'
-    deploy_csv_path = os.path.join(install_dir, 'controls/deploy-execution-plan.csv')
-    assert os.path.exists(deploy_csv_path), '未发现【k8s编排计划】deploy-execution-vars.csv，请确认！！！'
-    _, _, deploy_error_ret, _ = load_data_from_csv(deploy_csv_path, 'deploy', strict=strict)
-    script_csv_path = os.path.join(install_dir, 'controls/script-execution-plan.csv')
-    assert os.path.exists(script_csv_path), '未发现【script编排计划】script-execution-vars.csv，请确认！！！'
-    _, _, script_error_ret, _ = load_data_from_csv(script_csv_path, 'script', strict=strict)
-    return deploy_error_ret, script_error_ret
+    error_rets = []
+    for control_type in ('deploy', 'script'):
+        filename = f'{control_type}-execution-plan.csv'
+        csv_path = os.path.join(install_dir, 'controls', filename)
+        label = 'k8s编排计划' if control_type == 'deploy' else 'script编排计划'
+        assert os.path.isfile(csv_path), f'未发现【{label}】{filename}，请确认！！！'
+        if validate_plan_rows:
+            _, _, error_ret, _ = load_data_from_csv(csv_path, control_type, strict=strict)
+        else:
+            # 属地替换只校验表头，不按发版规范重新验收数据行。
+            get_control_csv_schema(read_controls_csv(csv_path), control_type)
+            error_ret = ([], [])
+        error_rets.append(error_ret)
+    return tuple(error_rets)
 
 
 def query_template_paths(root_dir):
@@ -851,23 +858,28 @@ def replace_placeholders_in_file(template_path, variables: dict, defined_keys: s
     return matched_keys, missing_keys, status, replace_num, logs
 
 
-def fix_global_csv(csv_path, var_fps_map):
-    with (open(csv_path, newline='', encoding='utf-8-sig') as fin,
-          tempfile.NamedTemporaryFile('w', newline='', encoding='utf-8-sig', delete=False) as fout):
-        reader = csv.DictReader(fin)
-        writer = csv.DictWriter(fout, fieldnames=reader.fieldnames)
-        writer.writeheader()
-        for data_row_index, row in enumerate(reader, start=1):
-            extra_values = row.pop(None, None)
-            if extra_values is not None:
-                raise ValueError(
-                    f'global-vars.csv 第 {data_row_index} 条数据有多余字段【{", ".join(extra_values)}】。'
-                    '如字段内容包含英文逗号，请使用双引号包裹！'
-                )
-            key = row['变量键（KEY）']
-            row['文件路径'] = '\n'.join(var_fps_map[key]) if key in var_fps_map else row['文件路径']
-            writer.writerow(row)
-    shutil.copyfile(fout.name, csv_path)
+def fix_global_csv(csv_path, var_fps_map: Dict[str, Set[str]]):
+    with tempfile.TemporaryDirectory(prefix='global-vars-') as temp_dir:
+        output_path = os.path.join(temp_dir, 'global-vars.csv')
+        with (open(csv_path, newline='', encoding='utf-8-sig') as fin,
+              open(output_path, 'w', newline='', encoding='utf-8-sig') as fout):
+            reader = csv.DictReader(fin)
+            fieldnames = reader.fieldnames
+            if fieldnames is None:
+                raise ValueError('global-vars.csv 缺少表头。')
+            writer = csv.DictWriter(fout, fieldnames=fieldnames)
+            writer.writeheader()
+            for data_row_index, row in enumerate(reader, start=1):
+                extra_values = row.pop(None, None)
+                if extra_values is not None:
+                    raise ValueError(
+                        f'global-vars.csv 第 {data_row_index} 条数据有多余字段【{", ".join(extra_values)}】。'
+                        '如字段内容包含英文逗号，请使用双引号包裹！'
+                    )
+                key = row['变量键（KEY）']
+                row['文件路径'] = '\n'.join(var_fps_map[key]) if key in var_fps_map else row['文件路径']
+                writer.writerow(row)
+        shutil.copyfile(output_path, csv_path)
 
 
 def query_k8s_yaml_paths(install_dir):
@@ -1197,7 +1209,8 @@ def check_script_syntax(path, source_path=None):
         raise ValueError(f'{suffix} 文件{location}语法检查未通过（{command[0]}）')
 
 
-def dispose_controls(install_dir, replace_mode='字符串和控制符', check=True, dispose_fps=(), *, strict=True):
+def dispose_controls(install_dir, replace_mode='字符串和控制符', check=True, dispose_fps=(), *, strict=True,
+                     validate_content=True):
     """
     处理中控类文件
     :param install_dir: 交付物目录路径
@@ -1205,12 +1218,14 @@ def dispose_controls(install_dir, replace_mode='字符串和控制符', check=Tr
     :param check: 是否检查
     :param dispose_fps: 需要处理的模版文件
     :param strict: 发布检查启用脚本语法校验；属地模式只保留基本检查，不调用外部工具
+    :param validate_content: 是否校验模版内容语法；属地替换关闭时两份执行计划只校验表头
     :return:
     """
-    deploy_error_ret, script_error_ret = check_standard(install_dir, strict=strict)
+    deploy_error_ret, script_error_ret = check_standard(
+        install_dir, strict=strict, validate_plan_rows=strict or validate_content)
     total_logs, file_logs = [], []
     template_paths = query_template_paths(install_dir) if check else dispose_fps
-    deploy_yaml_paths = query_k8s_yaml_paths(install_dir)
+    deploy_yaml_paths = query_k8s_yaml_paths(install_dir) if validate_content else set()
     all_vars, empty_idx_set, var_error_ret, version = load_data_from_csv(
         os.path.join(install_dir, 'controls/global-vars.csv'), strict=strict)
     vars_map, file_vars_map = dict(), dict()
@@ -1235,12 +1250,12 @@ def dispose_controls(install_dir, replace_mode='字符串和控制符', check=Tr
         relative_parts = Path(os.path.relpath(fp, install_dir)).parts
         validator = (
             partial(check_script_syntax, source_path=fp)
-            if strict and relative_parts[0] == 'scripts' and Path(fp).suffix.lower() in {
+            if validate_content and strict and relative_parts[0] == 'scripts' and Path(fp).suffix.lower() in {
                 '.js', '.sql', '.sh', '.yaml', '.yml', '.json',
             }
             else None
         )
-        if not strict and Path(fp).suffix.lower() in {'.yaml', '.yml'}:
+        if validate_content and not strict and Path(fp).suffix.lower() in {'.yaml', '.yml'}:
             validator = check_yaml_syntax
         replace_ret = replace_placeholders_in_file(fp, vars_map, defined_keys, replace_mode, check,
                                                    fp in deploy_yaml_paths, validator=validator)
@@ -1279,21 +1294,28 @@ def dispose_controls(install_dir, replace_mode='字符串和控制符', check=Tr
 
 
 def exec_replace(install_dir, replace_mode='字符串和控制符', check=False,
-                 old_image_prefix=None, new_image_prefix=None, *, strict=True) -> tuple[bool, list[list[str | int] | Any]]:
+                 old_image_prefix=None, new_image_prefix=None, *, strict=True,
+                 validate_content=True) -> tuple[bool, list[list[str | int] | Any]]:
     """
     :param install_dir: 物料路径
     :param replace_mode: 字符串和控制符 or 仅控制符
     :param check: 是否检查模式
     :param old_image_prefix:
     :param new_image_prefix:
+    :param validate_content: 部署配置替换传 False，仅替换文件内容，不执行内容语法校验
     :return: (脚本执行状态，日志及级别）
     """
     exist_error, logs = False, []
+    if not validate_content:
+        logs.append(['已跳过模版文件内容语法检查。', logging.INFO])
+        if not strict:
+            logs.append(['deploy-execution-plan.csv、script-execution-plan.csv 仅校验列名和顺序，已跳过数据行校验。', logging.INFO])
     error_log_titles = [['deploy-execution-plan.csv 检查失败：', logging.ERROR],
                         ['script-execution-plan.csv 检查失败：', logging.ERROR],
                         ['global-vars.csv 检查失败：', logging.ERROR]]
     try:
-        error_rets, file_logs, total_logs, var_fps_map = dispose_controls(install_dir, replace_mode, True, strict=strict)
+        error_rets, file_logs, total_logs, var_fps_map = dispose_controls(
+            install_dir, replace_mode, True, strict=strict, validate_content=validate_content)
         for i, error_ret in enumerate(error_rets):
             mask, error_logs = error_ret
             if error_logs:
@@ -1302,7 +1324,8 @@ def exec_replace(install_dir, replace_mode='字符串和控制符', check=False,
                 logs.extend([[e, logging.ERROR] for e in error_logs])
         assert not exist_error, '中控类文件检查失败!'
         for file_log in file_logs:
-            logs.append([f'-----------------  检查文件:{file_log[0]}  -----------------', logging.INFO])
+            action = '检查文件' if validate_content else '处理文件'
+            logs.append([f'-----------------  {action}:{file_log[0]}  -----------------', logging.INFO])
             logs.extend(file_log[1])
             for l in file_log[1]:
                 if l[1] == logging.ERROR:
@@ -1315,7 +1338,8 @@ def exec_replace(install_dir, replace_mode='字符串和控制符', check=False,
             dispose_fps = set()
             for fps in var_fps_map.values():
                 dispose_fps.update([os.path.join(install_dir, rp) for rp in fps])
-            dispose_controls(install_dir, replace_mode, False, dispose_fps, strict=strict)
+            dispose_controls(install_dir, replace_mode, False, dispose_fps, strict=strict,
+                             validate_content=validate_content)
             replace_k8s_images(install_dir, old_image_prefix, new_image_prefix)
         return True, [*logs, ['全局变量替换工具执行成功！', logging.INFO]]
     except Exception as e:
